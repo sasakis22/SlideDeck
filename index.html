@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>資料一覧</title>
+<style>
+  :root { --bg:#f5f6f8; --ink:#1b2232; --muted:#5d6678; --line:#dadee6; --accent:#f6cb3a; }
+  body { margin:0; background:var(--bg); color:var(--ink); line-height:1.7;
+    font-family:system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:32px 20px 64px; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  .lead { color:var(--muted); margin:0 0 24px; font-size:14px; }
+  .deck { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px 20px; align-items:center;
+    padding:16px 0; border-top:1px solid var(--line); }
+  .deck h2 { font-size:17px; margin:0; }
+  .deck .meta { color:var(--muted); font-size:13px; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .btn { height:36px; padding:0 14px; border:1px solid var(--line); border-radius:8px; background:#fff;
+    color:var(--ink); font:inherit; font-size:14px; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; }
+  .btn:hover { border-color:var(--muted); }
+  .btn.done { background:var(--accent); border-color:var(--accent); }
+  .preview { grid-column:1 / -1; }
+  .preview iframe { width:100%; aspect-ratio:16 / 10; border:0; border-radius:8px; }
+  .empty { color:var(--muted); padding:24px 0; border-top:1px solid var(--line); }
+  code { background:#fff; border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-size:13px; }
+  :focus-visible { outline:2px solid #2f6fe4; outline-offset:2px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>資料一覧</h1>
+  <p class="lead">「埋め込みコードをコピー」で自社HP用のコードを、「URLをコピー」でnote用のURLをコピーできます。</p>
+  <div id="list"><p class="empty">読み込み中…</p></div>
+</main>
+<script>
+(async function () {
+  'use strict';
+  const list = document.getElementById('list');
+  const base = new URL('viewer.html', location.href);
+
+  function viewerUrl(d) {
+    const u = new URL(base);
+    u.searchParams.set('file', d.file);
+    if (d.title) u.searchParams.set('title', d.title);
+    if (d.download === false) u.searchParams.set('download', '0');
+    return u.href;
+  }
+  function embedCode(d) {
+    const t = (d.title || '').replace(/"/g, '&quot;');
+    return '<iframe src="' + viewerUrl(d).replace(/&/g, '&amp;') + '" title="' + t + '"'
+      + ' style="width:100%;aspect-ratio:16/10;border:0;" allow="fullscreen" allowfullscreen loading="lazy"></iframe>';
+  }
+  async function copy(text, btn, label) {
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { window.prompt('コピーしてください', text); return; }
+    btn.textContent = 'コピーしました'; btn.classList.add('done');
+    setTimeout(() => { btn.textContent = label; btn.classList.remove('done'); }, 1800);
+  }
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
+
+  let decks;
+  try {
+    const res = await fetch('decks.json', { cache: 'no-store' });
+    decks = await res.json();
+  } catch (e) {
+    list.innerHTML = '';
+    list.append(el('p', 'empty', 'decks.json を読み込めませんでした。JSONの書き方（カンマや引用符）を確認してください。'));
+    return;
+  }
+  list.innerHTML = '';
+  if (!Array.isArray(decks) || !decks.length) {
+    list.append(el('p', 'empty', 'まだ資料がありません。pdfs フォルダにPDFを入れ、decks.json に追加してください。'));
+    return;
+  }
+  for (const d of decks) {
+    const row = el('section', 'deck');
+    const info = el('div');
+    info.append(el('h2', null, d.title || d.file), el('div', 'meta', [d.date, d.file].filter(Boolean).join('　')));
+    const actions = el('div', 'actions');
+    const open = el('a', 'btn', '表示'); open.href = viewerUrl(d); open.target = '_blank'; open.rel = 'noopener';
+    const embed = el('button', 'btn', '埋め込みコードをコピー'); embed.type = 'button';
+    embed.onclick = () => copy(embedCode(d), embed, '埋め込みコードをコピー');
+    const url = el('button', 'btn', 'URLをコピー'); url.type = 'button';
+    url.onclick = () => copy(viewerUrl(d), url, 'URLをコピー');
+    const prev = el('button', 'btn', 'プレビュー'); prev.type = 'button'; prev.setAttribute('aria-expanded', 'false');
+    const box = el('div', 'preview'); box.hidden = true;
+    prev.onclick = () => {
+      if (box.hidden && !box.firstChild) {
+        const f = document.createElement('iframe');
+        f.src = viewerUrl(d); f.title = d.title || d.file; f.allow = 'fullscreen'; f.setAttribute('allowfullscreen', '');
+        box.append(f);
+      }
+      box.hidden = !box.hidden; prev.setAttribute('aria-expanded', String(!box.hidden));
+    };
+    actions.append(open, embed, url, prev);
+    row.append(info, actions, box);
+    list.append(row);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>スライド</title>
+<style>
+  :root { --bg:#1f2430; --bar:#151922; --ink:#e9ecf1; --muted:#9aa3b2; --line:#2c3342; --accent:#f6cb3a; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font-family:system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif; }
+  .app { display:flex; flex-direction:column; height:100%; }
+  .stage { flex:1; min-height:0; position:relative; display:flex; align-items:center; justify-content:center;
+    overflow:hidden; padding:8px; box-sizing:border-box; touch-action:pan-y; user-select:none; }
+  .stage canvas { display:block; background:#fff; box-shadow:0 2px 12px rgba(0,0,0,.4); }
+  .hit { position:absolute; top:0; bottom:0; width:30%; background:none; border:0; padding:0; cursor:pointer; }
+  .hit.prev { left:0; cursor:w-resize; } .hit.next { right:0; cursor:e-resize; }
+  .msg { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    text-align:center; padding:16px; color:var(--muted); font-size:14px; line-height:1.7; }
+  .progress { height:3px; background:var(--line); }
+  .progress i { display:block; height:100%; width:0; background:var(--accent); transition:width .15s; }
+  .bar { display:flex; align-items:center; gap:4px; padding:4px 8px; background:var(--bar); font-size:13px; min-height:36px; }
+  .bar button, .bar a { display:inline-flex; align-items:center; justify-content:center; height:30px; min-width:30px;
+    padding:0 8px; border:0; border-radius:6px; background:transparent; color:var(--ink); font:inherit;
+    text-decoration:none; cursor:pointer; }
+  .bar button:hover:not(:disabled), .bar a:hover { background:rgba(255,255,255,.08); }
+  .bar button:disabled { opacity:.35; cursor:default; }
+  .bar svg { width:18px; height:18px; }
+  .count { font-variant-numeric:tabular-nums; min-width:64px; text-align:center; }
+  .title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); padding:0 8px; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  [hidden] { display:none !important; }
+  @media (max-width:420px) { .title { display:none; } .spacer { flex:1; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage" id="stage">
+    <div class="msg" id="msg">読み込み中…</div>
+    <button class="hit prev" id="hitPrev" aria-label="前のページ" hidden></button>
+    <button class="hit next" id="hitNext" aria-label="次のページ" hidden></button>
+  </div>
+  <div class="progress" aria-hidden="true"><i id="progress"></i></div>
+  <div class="bar">
+    <button id="prev" aria-label="前のページ" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <span class="count" id="count" aria-live="polite">– / –</span>
+    <button id="next" aria-label="次のページ" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+    <span class="title" id="title"></span>
+    <span class="spacer"></span>
+    <a id="download" aria-label="PDFをダウンロード" title="PDFをダウンロード" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>
+    </a>
+    <a id="openNew" aria-label="新しいタブで開く" title="新しいタブで開く" target="_blank" rel="noopener" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></svg>
+    </a>
+    <button id="full" aria-label="全画面表示" title="全画面表示（F）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    </button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+(async function () {
+  'use strict';
+  const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+  const $ = (id) => document.getElementById(id);
+  const stage = $('stage'), msg = $('msg');
+  const params = new URLSearchParams(location.search);
+  const file = params.get('file');
+  const inIframe = window.self !== window.top;
+
+  function showMessage(text) { msg.textContent = text; msg.hidden = false; }
+
+  // 同じサイト内のPDFだけを表示する（他サイトのPDFを勝手に表示させないため）
+  if (!file || /^[a-z]+:|^\/\//i.test(file) || file.includes('..')) {
+    showMessage('表示するPDFが指定されていません。URLに ?file=pdfs/資料名.pdf を付けてください。');
+    return;
+  }
+  if (!window.pdfjsLib) { showMessage('ビューアの部品を読み込めませんでした。ページを再読み込みしてください。'); return; }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = CDN + 'pdf.worker.min.js';
+
+  let pdf;
+  try {
+    const task = pdfjsLib.getDocument({
+      url: file,
+      cMapUrl: CDN + 'cmaps/',            // 日本語フォントを埋め込んでいないPDF向け
+      cMapPacked: true,
+      standardFontDataUrl: CDN + 'standard_fonts/'
+    });
+    task.onProgress = (p) => { if (p.total) $('progress').style.width = Math.round(p.loaded / p.total * 100) + '%'; };
+    pdf = await task.promise;
+  } catch (e) {
+    showMessage(e && e.name === 'MissingPDFException'
+      ? 'PDFが見つかりません。ファイル名とフォルダ（' + file + '）を確認してください。'
+      : 'PDFを開けませんでした。パスワード付きや破損したファイルでないか確認してください。');
+    return;
+  }
+
+  const total = pdf.numPages;
+  let page = Math.min(Math.max(1, parseInt(params.get('page') || '1', 10) || 1), total);
+  let canvas = null, renderTask = null, renderSeq = 0;
+
+  // タイトル：?title= → PDFのメタデータ → ファイル名 の順
+  let title = params.get('title');
+  if (!title) {
+    try { const meta = await pdf.getMetadata(); title = meta && meta.info && meta.info.Title; } catch (e) {}
+  }
+  if (!title) title = decodeURIComponent(file.split('/').pop().replace(/\.pdf$/i, ''));
+  $('title').textContent = title;
+  document.title = title;
+
+  if (params.get('download') !== '0') { $('download').href = file; $('download').setAttribute('download', ''); $('download').hidden = false; }
+  if (inIframe) { $('openNew').href = location.href; $('openNew').hidden = false; }
+  $('hitPrev').hidden = false; $('hitNext').hidden = false;
+
+  async function render() {
+    const seq = ++renderSeq;
+    if (renderTask) { try { renderTask.cancel(); } catch (e) {} }
+    const p = await pdf.getPage(page);
+    if (seq !== renderSeq) return;
+    const base = p.getViewport({ scale: 1 });
+    const pad = 16;
+    const fit = Math.min((stage.clientWidth - pad) / base.width, (stage.clientHeight - pad) / base.height);
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const vp = p.getViewport({ scale: fit * dpr });
+    const c = document.createElement('canvas');
+    c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+    c.style.width = Math.floor(vp.width / dpr) + 'px';
+    c.style.height = Math.floor(vp.height / dpr) + 'px';
+    c.setAttribute('role', 'img');
+    c.setAttribute('aria-label', title + '（' + page + 'ページ目）');
+    renderTask = p.render({ canvasContext: c.getContext('2d'), viewport: vp });
+    try { await renderTask.promise; } catch (e) { return; } // 次のページ操作でキャンセルされた
+    if (seq !== renderSeq) return;
+    if (canvas) canvas.replaceWith(c); else stage.prepend(c);
+    canvas = c;
+    msg.hidden = true;
+    if (page < total) pdf.getPage(page + 1); // 次ページを先読み
+  }
+
+  function go(n) {
+    n = Math.min(Math.max(1, n), total);
+    if (n === page && canvas) return;
+    page = n;
+    $('count').textContent = page + ' / ' + total;
+    $('prev').disabled = page === 1;
+    $('next').disabled = page === total;
+    $('progress').style.width = (page / total * 100) + '%';
+    try {
+      const u = new URL(location.href); u.searchParams.set('page', page);
+      history.replaceState(null, '', u);
+      if (inIframe) $('openNew').href = u.href;
+    } catch (e) {}
+    render();
+  }
+
+  $('prev').addEventListener('click', () => go(page - 1));
+  $('next').addEventListener('click', () => go(page + 1));
+  $('hitPrev').addEventListener('click', () => go(page - 1));
+  $('hitNext').addEventListener('click', () => go(page + 1));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(page + 1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(page - 1); }
+    else if (e.key === 'Home') go(1);
+    else if (e.key === 'End') go(total);
+    else if (e.key === 'f' || e.key === 'F') toggleFull();
+  });
+
+  // スマホのスワイプ
+  let sx = null;
+  stage.addEventListener('pointerdown', (e) => { sx = e.clientX; });
+  stage.addEventListener('pointerup', (e) => {
+    if (sx === null) return;
+    const dx = e.clientX - sx; sx = null;
+    if (Math.abs(dx) > 50) go(page + (dx < 0 ? 1 : -1));
+  });
+
+  function toggleFull() {
+    const el = document.documentElement;
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (el.requestFullscreen) el.requestFullscreen().catch(() => {
+      if (inIframe) window.open(location.href, '_blank', 'noopener'); // 埋め込み先が全画面を許可していない場合
+    });
+  }
+  $('full').addEventListener('click', toggleFull);
+
+  let resizeTimer;
+  new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(render, 120); }).observe(stage);
+
+  const first = page; page = 0; go(first); // 初期表示
+})();
+</script>
+</body>
+</html>
