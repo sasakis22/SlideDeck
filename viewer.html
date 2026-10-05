@@ -50,9 +50,6 @@
     </button>
     <span class="title" id="title"></span>
     <span class="spacer"></span>
-    <a id="download" aria-label="PDFをダウンロード" title="PDFをダウンロード" hidden>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"/></svg>
-    </a>
     <a id="openNew" aria-label="新しいタブで開く" title="新しいタブで開く" target="_blank" rel="noopener" hidden>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></svg>
     </a>
@@ -134,17 +131,6 @@
   $('title').textContent = title;
   document.title = title;
 
-  if (params.get('download') !== '0') {
-    const dl = $('download');
-    dl.hidden = false; dl.href = '#';
-    dl.addEventListener('click', async (e) => {
-      e.preventDefault();
-      const url = URL.createObjectURL(new Blob([await pdf.getData()], { type: 'application/pdf' }));
-      const a = document.createElement('a'); a.href = url; a.download = found.name;
-      document.body.append(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
-    });
-  }
   if (inIframe) { $('openNew').href = location.href; $('openNew').hidden = false; }
   $('hitPrev').hidden = false; $('hitNext').hidden = false;
 
@@ -201,6 +187,9 @@
     else if (e.key === 'End') go(total);
     else if (e.key === 'f' || e.key === 'F') toggleFull();
   });
+
+  // スライド画像の右クリック保存を無効化
+  stage.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // スマホのスワイプ
   let sx = null;
