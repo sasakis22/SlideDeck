@@ -21,7 +21,7 @@
   .btn:hover { border-color:var(--muted); }
   .btn.done { background:var(--accent); border-color:var(--accent); }
   .preview { grid-column:1 / -1; }
-  .preview iframe { width:100%; aspect-ratio:16 / 10; border:0; border-radius:8px; }
+  .preview iframe { width:100%; aspect-ratio:16 / 9; border:0; border-radius:8px; }
   .empty { color:var(--muted); padding:24px 0; border-top:1px solid var(--line); }
   code { background:#fff; border:1px solid var(--line); border-radius:4px; padding:1px 6px; font-size:13px; }
   :focus-visible { outline:2px solid #2f6fe4; outline-offset:2px; }
@@ -88,7 +88,7 @@
   function embedCode(f) {
     const t = f.name.replace(/\.pdf$/i, '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
     return '<iframe src="' + viewerUrl(f).replace(/&/g, '&amp;') + '" title="' + t + '"'
-      + ' style="width:100%;aspect-ratio:16/10;border:0;" allow="fullscreen" allowfullscreen loading="lazy"></iframe>';
+      + ' style="width:100%;aspect-ratio:16/9;border:0;" allow="fullscreen" allowfullscreen loading="lazy"></iframe>';
   }
   async function copy(text, btn, label) {
     try { await navigator.clipboard.writeText(text); }
