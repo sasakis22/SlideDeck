@@ -31,25 +31,63 @@
 <body>
 <main>
   <h1>資料一覧</h1>
-  <p class="lead">「埋め込みコードをコピー」で自社HP用のコードを、「URLをコピー」でnote用のURLをコピーできます。</p>
+  <p class="lead">Googleドライブの「HP掲載用資料」フォルダにPDFを入れると、ここに表示されます。「埋め込みコードをコピー」で自社HP用のコードを、「URLをコピー」でnote用のURLをコピーできます。</p>
   <div id="list"><p class="empty">読み込み中…</p></div>
 </main>
+<script src="config.js"></script>
 <script>
 (async function () {
   'use strict';
+  const API = 'https://www.googleapis.com/drive/v3/files';
+  const CFG = window.SLIDE_CONFIG || {};
   const list = document.getElementById('list');
   const base = new URL('viewer.html', location.href);
 
-  function viewerUrl(d) {
-    const u = new URL(base);
-    u.searchParams.set('file', d.file);
-    if (d.title) u.searchParams.set('title', d.title);
-    if (d.download === false) u.searchParams.set('download', '0');
-    return u.href;
+  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
+  function say(text) { list.replaceChildren(el('p', 'empty', text)); }
+
+  if (!CFG.apiKey || !CFG.folderId || /ここに/.test(CFG.apiKey + CFG.folderId)) {
+    say('config.js にAPIキーとフォルダIDを設定してください。'); return;
   }
-  function embedCode(d) {
-    const t = (d.title || '').replace(/"/g, '&quot;');
-    return '<iframe src="' + viewerUrl(d).replace(/&/g, '&amp;') + '" title="' + t + '"'
+
+  async function listFiles() {
+    const files = []; let pageToken = '';
+    do {
+      const u = new URL(API);
+      const q = {
+        q: `'${CFG.folderId}' in parents and trashed = false and mimeType = 'application/pdf'`,
+        fields: 'nextPageToken,files(id,name,modifiedTime)', orderBy: 'modifiedTime desc', pageSize: '200',
+        supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', key: CFG.apiKey
+      };
+      if (pageToken) q.pageToken = pageToken;
+      u.search = new URLSearchParams(q);
+      const r = await fetch(u);
+      if (!r.ok) { const e = new Error('api'); e.status = r.status; throw e; }
+      const j = await r.json();
+      files.push(...(j.files || [])); pageToken = j.nextPageToken || '';
+    } while (pageToken && files.length < 1000);
+    // 同じ名前のファイルが複数あるときは新しい方だけ表示
+    const seen = new Set();
+    return files.filter((f) => !seen.has(f.name) && seen.add(f.name));
+  }
+
+  let files;
+  try { files = await listFiles(); }
+  catch (e) {
+    say(e.status === 404 ? 'フォルダが見つかりません。config.js のフォルダIDを確認してください。'
+      : (e.status === 403 || e.status === 400) ? 'Googleドライブに接続できませんでした。APIキーの制限設定（ウェブサイト・API）を確認してください。'
+      : 'Googleドライブに接続できませんでした。時間をおいて再読み込みしてください。');
+    return;
+  }
+  if (!files.length) {
+    say('PDFがありません。フォルダにPDFが入っているか、フォルダの共有設定が「リンクを知っている全員」になっているか確認してください。');
+    return;
+  }
+
+  function viewerUrl(f) { const u = new URL(base); u.searchParams.set('name', f.name); return u.href; }
+  function embedCode(f) {
+    const t = f.name.replace(/\.pdf$/i, '').replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    return '<iframe src="' + viewerUrl(f).replace(/&/g, '&amp;') + '" title="' + t + '"'
       + ' style="width:100%;aspect-ratio:16/10;border:0;" allow="fullscreen" allowfullscreen loading="lazy"></iframe>';
   }
   async function copy(text, btn, label) {
@@ -58,39 +96,26 @@
     btn.textContent = 'コピーしました'; btn.classList.add('done');
     setTimeout(() => { btn.textContent = label; btn.classList.remove('done'); }, 1800);
   }
-  function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
+  const fmt = (iso) => { const d = new Date(iso); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
 
-  let decks;
-  try {
-    const res = await fetch('decks.json', { cache: 'no-store' });
-    decks = await res.json();
-  } catch (e) {
-    list.innerHTML = '';
-    list.append(el('p', 'empty', 'decks.json を読み込めませんでした。JSONの書き方（カンマや引用符）を確認してください。'));
-    return;
-  }
-  list.innerHTML = '';
-  if (!Array.isArray(decks) || !decks.length) {
-    list.append(el('p', 'empty', 'まだ資料がありません。pdfs フォルダにPDFを入れ、decks.json に追加してください。'));
-    return;
-  }
-  for (const d of decks) {
+  list.replaceChildren();
+  for (const f of files) {
     const row = el('section', 'deck');
     const info = el('div');
-    info.append(el('h2', null, d.title || d.file), el('div', 'meta', [d.date, d.file].filter(Boolean).join('　')));
+    info.append(el('h2', null, f.name.replace(/\.pdf$/i, '')), el('div', 'meta', '更新日 ' + fmt(f.modifiedTime)));
     const actions = el('div', 'actions');
-    const open = el('a', 'btn', '表示'); open.href = viewerUrl(d); open.target = '_blank'; open.rel = 'noopener';
+    const open = el('a', 'btn', '表示'); open.href = viewerUrl(f); open.target = '_blank'; open.rel = 'noopener';
     const embed = el('button', 'btn', '埋め込みコードをコピー'); embed.type = 'button';
-    embed.onclick = () => copy(embedCode(d), embed, '埋め込みコードをコピー');
+    embed.onclick = () => copy(embedCode(f), embed, '埋め込みコードをコピー');
     const url = el('button', 'btn', 'URLをコピー'); url.type = 'button';
-    url.onclick = () => copy(viewerUrl(d), url, 'URLをコピー');
+    url.onclick = () => copy(viewerUrl(f), url, 'URLをコピー');
     const prev = el('button', 'btn', 'プレビュー'); prev.type = 'button'; prev.setAttribute('aria-expanded', 'false');
     const box = el('div', 'preview'); box.hidden = true;
     prev.onclick = () => {
       if (box.hidden && !box.firstChild) {
-        const f = document.createElement('iframe');
-        f.src = viewerUrl(d); f.title = d.title || d.file; f.allow = 'fullscreen'; f.setAttribute('allowfullscreen', '');
-        box.append(f);
+        const fr = document.createElement('iframe');
+        fr.src = viewerUrl(f); fr.title = f.name; fr.allow = 'fullscreen'; fr.setAttribute('allowfullscreen', '');
+        box.append(fr);
       }
       box.hidden = !box.hidden; prev.setAttribute('aria-expanded', String(!box.hidden));
     };

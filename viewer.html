@@ -63,41 +63,66 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="config.js"></script>
 <script>
 (async function () {
   'use strict';
   const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+  const API = 'https://www.googleapis.com/drive/v3/files';
+  const CFG = window.SLIDE_CONFIG || {};
   const $ = (id) => document.getElementById(id);
   const stage = $('stage'), msg = $('msg');
   const params = new URLSearchParams(location.search);
-  const file = params.get('file');
+  const name = params.get('name');
   const inIframe = window.self !== window.top;
 
   function showMessage(text) { msg.textContent = text; msg.hidden = false; }
 
-  // 同じサイト内のPDFだけを表示する（他サイトのPDFを勝手に表示させないため）
-  if (!file || /^[a-z]+:|^\/\//i.test(file) || file.includes('..')) {
-    showMessage('表示するPDFが指定されていません。URLに ?file=pdfs/資料名.pdf を付けてください。');
-    return;
+  if (!CFG.apiKey || !CFG.folderId || /ここに/.test(CFG.apiKey + CFG.folderId)) {
+    showMessage('config.js にAPIキーとフォルダIDが設定されていません。'); return;
   }
+  if (!name) { showMessage('表示する資料が指定されていません。資料一覧からURLをコピーしてください。'); return; }
   if (!window.pdfjsLib) { showMessage('ビューアの部品を読み込めませんでした。ページを再読み込みしてください。'); return; }
 
-  pdfjsLib.GlobalWorkerOptions.workerSrc = CDN + 'pdf.worker.min.js';
+  // 指定フォルダの中から、ファイル名が一致する最新のPDFを探す
+  async function findFile(fileName) {
+    const esc = fileName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const u = new URL(API);
+    u.search = new URLSearchParams({
+      q: `'${CFG.folderId}' in parents and name = '${esc}' and trashed = false`,
+      fields: 'files(id,name,modifiedTime)', orderBy: 'modifiedTime desc', pageSize: '1',
+      supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', key: CFG.apiKey
+    });
+    const r = await fetch(u);
+    if (!r.ok) { const e = new Error('api'); e.status = r.status; throw e; }
+    return ((await r.json()).files || [])[0] || null;
+  }
 
+  let found;
+  try { found = await findFile(name); }
+  catch (e) {
+    showMessage(e.status === 403 || e.status === 400
+      ? 'Googleドライブに接続できませんでした。APIキーの制限設定を確認してください。'
+      : 'Googleドライブに接続できませんでした。時間をおいて再読み込みしてください。');
+    return;
+  }
+  if (!found) { showMessage('「' + name + '」が見つかりません。ファイル名が変わったか、削除された可能性があります。'); return; }
+
+  pdfjsLib.GlobalWorkerOptions.workerSrc = CDN + 'pdf.worker.min.js';
   let pdf;
   try {
     const task = pdfjsLib.getDocument({
-      url: file,
-      cMapUrl: CDN + 'cmaps/',            // 日本語フォントを埋め込んでいないPDF向け
-      cMapPacked: true,
+      url: `${API}/${found.id}?alt=media&supportsAllDrives=true&key=${encodeURIComponent(CFG.apiKey)}`,
+      disableRange: true, disableStream: true,
+      cMapUrl: CDN + 'cmaps/', cMapPacked: true,            // 日本語フォントを埋め込んでいないPDF向け
       standardFontDataUrl: CDN + 'standard_fonts/'
     });
     task.onProgress = (p) => { if (p.total) $('progress').style.width = Math.round(p.loaded / p.total * 100) + '%'; };
     pdf = await task.promise;
   } catch (e) {
-    showMessage(e && e.name === 'MissingPDFException'
-      ? 'PDFが見つかりません。ファイル名とフォルダ（' + file + '）を確認してください。'
-      : 'PDFを開けませんでした。パスワード付きや破損したファイルでないか確認してください。');
+    showMessage(e && e.name === 'PasswordException'
+      ? 'パスワード付きのPDFは表示できません。'
+      : 'PDFを開けませんでした。フォルダの共有設定が「リンクを知っている全員」になっているか確認してください。');
     return;
   }
 
@@ -105,16 +130,21 @@
   let page = Math.min(Math.max(1, parseInt(params.get('page') || '1', 10) || 1), total);
   let canvas = null, renderTask = null, renderSeq = 0;
 
-  // タイトル：?title= → PDFのメタデータ → ファイル名 の順
-  let title = params.get('title');
-  if (!title) {
-    try { const meta = await pdf.getMetadata(); title = meta && meta.info && meta.info.Title; } catch (e) {}
-  }
-  if (!title) title = decodeURIComponent(file.split('/').pop().replace(/\.pdf$/i, ''));
+  const title = found.name.replace(/\.pdf$/i, '');
   $('title').textContent = title;
   document.title = title;
 
-  if (params.get('download') !== '0') { $('download').href = file; $('download').setAttribute('download', ''); $('download').hidden = false; }
+  if (params.get('download') !== '0') {
+    const dl = $('download');
+    dl.hidden = false; dl.href = '#';
+    dl.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const url = URL.createObjectURL(new Blob([await pdf.getData()], { type: 'application/pdf' }));
+      const a = document.createElement('a'); a.href = url; a.download = found.name;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+  }
   if (inIframe) { $('openNew').href = location.href; $('openNew').hidden = false; }
   $('hitPrev').hidden = false; $('hitNext').hidden = false;
 
